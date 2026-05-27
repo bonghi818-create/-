@@ -18,20 +18,64 @@ export default function MealInputCard({ onMealAdded, isLoading, setIsLoading }: 
   const [errorMsg, setErrorMsg] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Parse file and generate Base64
+  // Parse file and generate Base64 with high robustness (including Korean filename sanitation)
   const processFile = (file: File) => {
+    // 1. Validate if file object is valid
+    if (!file || typeof file.type !== "string") {
+      setErrorMsg("유효한 이미지 파일이 아닙니다.");
+      return;
+    }
+
     if (!file.type.startsWith("image/")) {
       setErrorMsg("이미지 형식의 파일만 업로드할 수 있습니다.");
       return;
     }
     setErrorMsg("");
-    setImageFile(file);
+
+    // 2. Handle Korean (non-ASCII) file name sanitation
+    // Non-ASCII characters in filename can throw 'The string did not match the expected pattern' or break inside Vercel's multi-part uploading / btoa headers
+    let processedFile = file;
+    const hasNonAscii = /[^\x00-\x7F]/.test(file.name);
+    if (hasNonAscii) {
+      console.log("Safe-renaming non-ASCII/Korean filename to prevent Vercel 'expected pattern' or headers encoding errors:", file.name);
+      try {
+        const extension = file.name.split('.').pop() || 'png';
+        const safeName = `upload_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${extension}`;
+        processedFile = new File([file], safeName, { type: file.type });
+      } catch (err) {
+        console.warn("Failed to sanitize filename, proceeding with original:", err);
+      }
+    }
+
+    // 3. Robust URL.createObjectURL validation (verifies file is healthy for memory access)
+    try {
+      const testUrl = URL.createObjectURL(processedFile);
+      if (!testUrl || !testUrl.startsWith("blob:")) {
+        throw new Error("Created object URL is invalid.");
+      }
+      // Revoke test URL immediately to prevent memory leaks
+      URL.revokeObjectURL(testUrl);
+    } catch (e) {
+      console.error("URL.createObjectURL validation failure:", e);
+      setErrorMsg("로컬 이미지 경로 형식이 올바르지 않거나 브라우저에서 읽기를 거부했습니다.");
+      return;
+    }
+
+    setImageFile(processedFile);
 
     const reader = new FileReader();
     reader.onloadend = () => {
-      setImagePreview(reader.result as string);
+      const result = reader.result as string;
+      if (!result || !result.startsWith("data:")) {
+        setErrorMsg("이미지를 올바른 형식의 Base64 데이터 문자열로 인코딩하지 못했습니다.");
+        return;
+      }
+      setImagePreview(result);
     };
-    reader.readAsDataURL(file);
+    reader.onerror = () => {
+      setErrorMsg("파일을 메모리에 로드하는 중 오류가 발생했습니다.");
+    };
+    reader.readAsDataURL(processedFile);
   };
 
   // Drag and drop handlers
@@ -92,7 +136,19 @@ export default function MealInputCard({ onMealAdded, isLoading, setIsLoading }: 
           const match = parts[0].match(/:(.*?);/);
           imageMime = match ? match[1] : "image/png";
           imageBase64 = parts[1];
+        } else {
+          const match = imagePreview.match(/data:(.*?);base64,/);
+          if (match) {
+            imageMime = match[1];
+            imageBase64 = imagePreview.replace(/^data:.*?;base64,/, "");
+          } else {
+            imageMime = "image/png";
+            imageBase64 = imagePreview;
+          }
         }
+        
+        // Clean any potential white spaces or new lines in Base64 string that could trigger DOMException
+        imageBase64 = imageBase64.replace(/\s/g, "");
       }
 
       const response = await fetch("/api/analyze", {
