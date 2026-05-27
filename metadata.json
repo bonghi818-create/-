@@ -1,0 +1,6 @@
+{
+  "name": "GreenPlate",
+  "description": "식단 사진/텍스트를 분석하여 칼로리 및 상세 영양소(탄단지 + 비타민/무기질)를 파악하고, 개인별 신체 지표에 따른 섭취 적절성을 시각적으로 피드백하는 건강 대시보드",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
